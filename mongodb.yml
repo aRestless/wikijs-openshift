@@ -1,0 +1,126 @@
+---
+apiVersion: v1
+kind: Template
+labels:
+  app: wikijs
+  template: wikijs
+metadata:
+  name: wikijs
+  template.openshift.io/bindable: "false"
+parameters:
+  - displaName: Name
+    name: NAME
+    required: true
+    value: wikijs
+  - description: Database volume capacity
+    displayName: Volume Capacity
+    name: VOLUME_CAPACITY
+    required: true
+    value: 5Gi
+
+objects:
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: ${NAME}-db
+    spec:
+      ports:
+        - name: mongodb
+          port: 27017
+      selector:
+        name: ${NAME}-db
+
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: ${NAME}-db-data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: ${VOLUME_CAPACITY}
+
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      name: mongodb
+    spec:
+      lookupPolicy:
+        local: false
+      tags:
+        - from:
+            kind: DockerImage
+            name: centos/mongodb-34-centos7
+          name: "2"
+          referencePolicy:
+            type: Source
+
+  - apiVersion: v1
+    kind: DeploymentConfig
+    metadata:
+      annotations:
+        template.alpha.openshift.io/wait-for-ready: "true"
+      name: ${NAME}-db
+    spec:
+      replicas: 1
+      selector:
+        name: ${NAME}-db
+      strategy:
+        type: Recreate
+      template:
+        metadata:
+          labels:
+            name: ${NAME}-db
+        spec:
+          containers:
+            - env:
+                - name: MONGODB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      key: database-user
+                      name: ${NAME}-db
+                - name: MONGODB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      key: database-password
+                      name: ${NAME}-db
+                - name: MONGODB_DATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      key: database-name
+                      name: ${NAME}-db
+                - name: MONGODB_ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      key: database-admin-password
+                      name: ${NAME}-db
+              image: ' '
+              imagePullPolicy: IfNotPresent
+              livenessProbe:
+                initialDelaySeconds: 30
+                tcpSocket:
+                  port: 27017
+                timeoutSeconds: 1
+              name: mongodb
+              ports:
+                - containerPort: 27017
+              volumeMounts:
+                - mountPath: /var/lib/mongodb/data
+                  name: ${NAME}-db-data
+          volumes:
+            - name: ${NAME}-db-data
+              persistentVolumeClaim:
+                claimName: ${NAME}-db-data
+      triggers:
+        - imageChangeParams:
+            automatic: true
+            containerNames:
+              - mongodb
+            from:
+              kind: ImageStreamTag
+              name: mongodb:latest
+              namespace: openshift
+          type: ImageChange
+        - type: ConfigChange

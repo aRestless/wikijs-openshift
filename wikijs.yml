@@ -1,0 +1,151 @@
+---
+apiVersion: v1
+kind: Template
+labels:
+  app: wikijs
+  template: wikijs
+metadata:
+  name: wikijs
+  template.openshift.io/bindable: "false"
+parameters:
+  - displaName: Name
+    name: NAME
+    required: true
+    value: wikijs
+  - description: Database volume capacity
+    displayName: Volume Capacity
+    name: VOLUME_CAPACITY
+    required: true
+    value: 5Gi
+  - name: VOLUME_PATH
+    value: '/vol'
+  - name: WIKI_ADMIN_EMAIL
+    required: true
+  - name: HOST
+    value: null
+objects:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: ${NAME}
+    spec:
+      ports:
+        - name: wikijs
+          port: 3000
+          protocol: TCP
+          targetPort: 3000
+      selector:
+        deploymentconfig: ${NAME}
+
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: ${NAME}-data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: ${VOLUME_CAPACITY}
+
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      name: ${NAME}
+
+  - apiVersion: v1
+    kind: BuildConfig
+    metadata:
+      name: ${NAME}
+    spec:
+      output:
+        to:
+          kind: ImageStreamTag
+          name: ${NAME}:latest
+      postCommit: {}
+      runPolicy: Serial
+      source:
+        type: Binary
+      strategy:
+        dockerStrategy: {}
+    triggers:
+      - imageChange: {}
+        type: ImageChange
+      - type: ConfigChange
+
+  - apiVersion: v1
+    kind: DeploymentConfig
+    metadata:
+      name: ${NAME}
+    spec:
+      replicas: 1
+      selector:
+        deploymentconfig: ${NAME}
+      strategy:
+        type: Recreate
+      template:
+        metadata:
+          labels:
+            app: ${NAME}
+            deploymentconfig: ${NAME}
+        spec:
+          containers:
+            - env:
+              - name: WIKI_ADMIN_EMAIL
+                value: ${WIKI_ADMIN_EMAIL}
+              - name: WIKIJS_HOST
+                value: https://${HOST}
+              - name: WIKIJS_PORT
+                value: '3000'
+              - name: WIKIJS_PATHS_DATA
+                value: '${VOLUME_PATH}/data'
+              - name: WIKIJS_PATHS_REPO
+                value: '${VOLUME_PATH}/repo'
+              - name: WIKIJS_SESSION_SECRET
+                valueFrom:
+                  secretKeyRef:
+                    key: session-secret
+                    name: ${NAME}-db
+              - name: MONGODB_USER
+                valueFrom:
+                  secretKeyRef:
+                    key: database-user
+                    name: ${NAME}-db
+              - name: MONGODB_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    key: database-password
+                    name: ${NAME}-db
+              - name: MONGODB_DATABASE
+                valueFrom:
+                  secretKeyRef:
+                    key: database-name
+                    name: ${NAME}-db
+              name: ${NAME}
+              ports:
+                - containerPort: 3000
+                  protocol: TCP
+              volumeMounts:
+                - mountPath: ${VOLUME_PATH} 
+                  name: ${NAME}-data
+                - mountPath: /var/wiki/config
+                  name: ${NAME}-config
+              restartPolicy: always
+          volumes:
+            - name: ${NAME}-data
+              persistentVolumeClaim:
+                claimName: ${NAME}-data
+            - name: ${NAME}-config
+              configMap:
+                name: ${NAME}-config
+      test: false
+      triggers:
+        - imageChangeParams:
+            automatic: true
+            containerNames:
+              - ${NAME}
+            from:
+              kind: ImageStreamTag
+              name: ${NAME}:latest
+          type: ImageChange
+        - type: ConfigChange
